@@ -45,6 +45,54 @@ npm run dev
 前端默认监听 `http://127.0.0.1:5173/`，dev server 不会自动打开浏览器，
 需要自己访问。`/api` 由 vite 代理到后端 `http://127.0.0.1:8000`。
 
+## 质量换版判定链路
+
+质量规则与清洗规则都按版本管理，换版链路遵循以下口径：
+
+- **版本账本**：同一规则同一时刻只允许一个「已评审且已生效」版本；
+  并发换版时调用方带 `expected_version`，冲突一律以持久化账本为准。
+- **采样复用**：采样结论按校验表 + 目标字段 + 规则版本 + 采样比例生成
+  `sample_key`，同一版本重复采样只生效一次；只收紧阈值时复用样本、
+  只重评边界，不重新采样。
+- **立即失效**：规则表达式、校验表/字段或阻断级别变化时旧结论立即失效，
+  不允许把旧版本「通过」挂到新版本上。
+- **阈值判定**：闭区间命中边界仍通过，开区间命中边界即越界；零样本、
+  采样失败、异常中断和重试超时分别落到「待判定 / 采样失败 / 异常中断 /
+  重试超时」，一律不沿用上次通过。
+- **历史保留**：判定结果按版本保留，同版本重新判定只保留一条活跃结论，
+  其余标记失效。
+- **清洗联动**：清洗规则换版改变输出字段时，发布同批次标记受影响区间，
+  只重跑区间内必要样本；新增输出字段没有历史样本时判为待判定。
+- **两页联动**：清洗页的「质量结论 / 阻断结论 / 受影响区间」来自质量页
+  同一份表级汇总（`GET /api/quality/table/{table}`），两页可互相跳转并
+  共享 `table` 筛选。
+
+示例：`QUAL_PAY_AMOUNT` 的 v2 采样 10% 得到异常率 2.4%（当时上界 3%，结论通过）；
+v3 只把上界收紧到 2% 时，复用 v2 样本只重评边界，结论改为阻断，v2 的历史结论不变。
+
+采样快照保留 `sample_key`、`sample_hash`、`sample_size`、`bad_rows`、
+`bad_rate`、`boundary_value`、`lower_boundary_value`、`boundary_side`、
+`boundary_hit`、`policy`、`evaluated_at`、`reuse_count` 与 `affected_range`。
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/quality?table=&field=&version=&status=` | 质量规则列表（带版本、结论、快照摘要） |
+| `GET /api/quality/rules/{规则编号}/versions` | 版本列表：评审状态、生效状态、最新结论 |
+| `GET /api/quality/rules/{规则编号}?version=` | 采样快照与判定历史 |
+| `POST /api/quality/{id}/change-version` | 换版重评（`target_version` + `expected_version`） |
+| `POST /api/quality/{id}/sample` | 采样上报（含失败/中断/超时状态） |
+| `GET /api/quality/table/{表名}` | 表级质量结论汇总（清洗页复用） |
+| `GET /api/cleanrule/rules/{规则编号}/versions` | 清洗版本列表与受影响区间 |
+| `POST /api/cleanrule/{id}/change-version` | 清洗换版并触发质量联动重评 |
+
+测试：
+
+```bash
+cd backend
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests -q
+```
+
 ## 业务模块
 
 | 模块 | 目录 | 业务对象 | 主要字段 |

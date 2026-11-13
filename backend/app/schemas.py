@@ -28,6 +28,23 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class VersionChangePayload(BaseModel):
+    """换版请求：目标版本 + 期望的当前生效版本，用于并发冲突检测。"""
+
+    target_version: str
+    expected_version: str | None = None
+    force_rerun: bool = False
+
+
+class CleanruleChangePayload(BaseModel):
+    """清洗规则换版请求：目标版本、期望版本和受影响区间。"""
+
+    target_version: str
+    expected_version: str | None = None
+    affected_from: str | None = None
+    affected_to: str | None = None
+
+
 
 class LandingEntry(BaseModel):
     """落地批次明细结构。"""

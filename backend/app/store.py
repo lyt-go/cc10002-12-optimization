@@ -10,16 +10,30 @@ from app.seed import SEED_ROWS
 
 
 class Store:
+    # 这些表由业务服务整体替换，不参与「今日新增 / 待处理 / 异常量」的模块统计，
+    # 否则审计和快照的明细行会把概览数字撑歪。
+    INTERNAL_MODULES = {
+        "quality_version_ledger",
+        "quality_sample_snapshot",
+        "quality_evaluation",
+        "cleanrule_version_ledger",
+        "cleanrule_release",
+    }
+
     def __init__(self) -> None:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
 
     def module_names(self) -> list[str]:
-        return sorted(self._tables)
+        return sorted(name for name in self._tables if name not in self.INTERNAL_MODULES)
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
+
+    def replace(self, module: str, rows: list[dict[str, Any]]) -> None:
+        """整体替换一张派生表：调用方负责保留历史，这里只做落盘。"""
+        self._tables[module] = [dict(row) for row in rows]
 
     def find(self, module: str, entry_id: int) -> dict[str, Any] | None:
         for row in self.rows(module):

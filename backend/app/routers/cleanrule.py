@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import ActionResult, CleanruleChangePayload, EntryPayload, PageResult
 from app.services.cleanrule import CleanruleService
 
 router = APIRouter(prefix="/api/cleanrule", tags=["清洗规则"])
@@ -20,13 +20,17 @@ STATUSES = ["草稿", "规则评审中", "已启用", "已废弃"]
 def list_entries(
     keyword: str | None = Query(default=None, description="按规则编号检索"),
     status: str | None = Query(default=None, description="草稿、规则评审中、已启用、已废弃"),
+    table: str | None = Query(default=None, description="按输入表名精确过滤"),
+    version: str | None = Query(default=None, description="按规则版本精确过滤"),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
     """按规则编号与状态过滤清洗规则列表；没有数据时返回空页，不报错。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    items, total = service.list_entries(
+        keyword=keyword, status=status, table=table, version=version, page=page, size=size
+    )
     return PageResult(items=items, total=total, page=page, size=size)
 
 
@@ -56,6 +60,39 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
+
+
+@router.get("/rules/{rule_no}")
+def get_rule_detail(rule_no: str, version: str | None = None) -> dict[str, Any]:
+    """读取清洗规则的版本详情：版本列表、输出字段与复用后的质量结论。"""
+    detail = service.detail(rule_no, version)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"清洗规则 {rule_no} 不存在或已归档")
+    return detail
+
+
+@router.get("/rules/{rule_no}/versions")
+def get_rule_versions(rule_no: str) -> dict[str, Any]:
+    """版本下拉：评审状态、生效状态、输出字段与受影响区间。"""
+    options = service.version_options(rule_no)
+    if not options:
+        raise HTTPException(status_code=404, detail=f"清洗规则 {rule_no} 没有可用版本")
+    return {"rule": rule_no, "items": options}
+
+
+@router.post("/{entry_id}/change-version", response_model=ActionResult)
+def change_version(entry_id: int, payload: CleanruleChangePayload) -> ActionResult:
+    """清洗规则换版：输出字段变化时标记受影响区间并触发质量联动重评。"""
+    result, message = service.change_version(
+        entry_id=entry_id,
+        target_version=payload.target_version,
+        expected_version=payload.expected_version,
+        affected_from=payload.affected_from,
+        affected_to=payload.affected_to,
+    )
+    if result is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=result)
 
 
 @router.get("/export")

@@ -1,7 +1,319 @@
-"""示例数据：每个模块给几条不同状态的记录，方便起服务后立刻看到内容。"""
+"""示例数据：每个模块给几条不同状态的记录，方便起服务后立刻看到内容。
+
+质量校验与清洗规则额外带一组「换版」样例：同一规则的多个版本、采样快照与
+版本账本都按持久化口径铺好，起服务后就能看到复用、失效和阻断的完整链路。
+"""
 from __future__ import annotations
 
 from typing import Any
+
+# 质量规则示例：QUAL_PAY_AMOUNT 是换版样例的主角。
+# v1 上界 3%，10% 采样得到异常率 2.4%，当时结论「通过」；
+# v2/v3 只把上界从 3% 收紧到 2%，采样口径不变，按复用规则只需要重评边界。
+SEED_QUALITY_VERSIONS: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "校验表名": "DWD_PAY_ORDER",
+        "目标字段": "pay_amount",
+        "校验表达式": "pay_amount IS NOT NULL AND pay_amount >= 0",
+        "阈值下界": 0.0,
+        "阈值上界": 3.0,
+        "采样比例": 0.1,
+        "阻断级别": "阻断",
+        "规则版本": "v1",
+        "status": "已启用",
+        "reviewed": True,
+        "pending": False,
+        "abnormal": False,
+    },
+    {
+        "id": 2,
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "校验表名": "DWD_PAY_ORDER",
+        "目标字段": "pay_amount",
+        "校验表达式": "pay_amount IS NOT NULL AND pay_amount >= 0",
+        "阈值下界": 0.0,
+        "阈值上界": 3.0,
+        "采样比例": 0.1,
+        "阻断级别": "阻断",
+        "规则版本": "v2",
+        "status": "已启用",
+        "reviewed": True,
+        "pending": False,
+        "abnormal": False,
+    },
+    {
+        "id": 3,
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "校验表名": "DWD_PAY_ORDER",
+        "目标字段": "pay_amount",
+        "校验表达式": "pay_amount IS NOT NULL AND pay_amount >= 0",
+        "阈值下界": 0.0,
+        "阈值上界": 2.0,
+        "采样比例": 0.1,
+        "阻断级别": "阻断",
+        "规则版本": "v3",
+        "status": "规则评审中",
+        "reviewed": False,
+        "pending": True,
+        "abnormal": False,
+    },
+    {
+        "id": 4,
+        "规则编号": "QUAL_ORDER_STATUS",
+        "校验表名": "DWD_ORDER",
+        "目标字段": "order_status",
+        "校验表达式": "order_status IN ('paid', 'refunded', 'closed')",
+        "阈值下界": 0.0,
+        "阈值上界": 5.0,
+        "采样比例": 0.2,
+        "阻断级别": "告警",
+        "规则版本": "v1",
+        "status": "草稿",
+        "reviewed": False,
+        "pending": True,
+        "abnormal": False,
+        "sample_size": 5000,
+        "bad_rows": 75,
+    },
+    {
+        "id": 5,
+        "规则编号": "QUAL_ZERO_SAMPLE",
+        "校验表名": "ODS_LOGIN_EVENT",
+        "目标字段": "user_id",
+        "校验表达式": "user_id IS NOT NULL",
+        "阈值下界": 0.0,
+        "阈值上界": 1.0,
+        "采样比例": 0.05,
+        "阻断级别": "阻断",
+        "规则版本": "v1",
+        "status": "已启用",
+        "reviewed": True,
+        "pending": False,
+        "abnormal": False,
+        "sample_size": 0,
+        "bad_rows": 0,
+    },
+    {
+        "id": 6,
+        "规则编号": "QUAL_PAY_STATUS",
+        "校验表名": "DWD_PAY_ORDER",
+        "目标字段": "pay_status",
+        "校验表达式": "pay_status IS NOT NULL AND pay_status IN ('success', 'pending')",
+        "阈值下界": 0.0,
+        "阈值上界": 2.0,
+        "采样比例": 0.1,
+        "阻断级别": "阻断",
+        "规则版本": "v1",
+        "status": "已启用",
+        "reviewed": True,
+        "pending": False,
+        "abnormal": True,
+        "sample_size": 1000,
+        "bad_rows": 24,
+        # 这条规则挂在新增输出字段上：清洗 v2 之前没有该字段，历史样本不可信。
+        "clean_version": "v2",
+        "sample_valid_from": "2026-10-20",
+    },
+]
+
+# 持久化版本账本：只允许「已评审」版本生效，同一规则同一版本只留一条。
+SEED_QUALITY_VERSION_LEDGER: list[dict[str, Any]] = [
+    {
+        "id": 1,
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "规则版本": "v1",
+        "content_hash": "qa-v1-3f9c11a2",
+        "status": "已替换",
+        "reviewed": True,
+        "bound_block": False,
+        "released_at": "2026-10-08T09:12:00",
+        "replaced_by": "v2",
+        "reviewed_by": "数据治理评审组",
+    },
+    {
+        "id": 2,
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "规则版本": "v2",
+        "content_hash": "qa-v2-7c2e40bd",
+        "status": "已生效",
+        "reviewed": True,
+        "bound_block": True,
+        "released_at": "2026-10-20T10:05:00",
+        "replaced_by": None,
+        "reviewed_by": "数据治理评审组",
+    },
+    {
+        "id": 3,
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "规则版本": "v3",
+        "content_hash": "qa-v3-1a44d9e0",
+        "status": "评审中",
+        "reviewed": False,
+        "bound_block": False,
+        "released_at": None,
+        "replaced_by": None,
+        "reviewed_by": None,
+    },
+    {
+        "id": 4,
+        "规则编号": "QUAL_ORDER_STATUS",
+        "规则版本": "v1",
+        "content_hash": "qa-os-v1-55b0e77f",
+        "status": "草稿",
+        "reviewed": False,
+        "bound_block": False,
+        "released_at": None,
+        "replaced_by": None,
+        "reviewed_by": None,
+    },
+    {
+        "id": 5,
+        "规则编号": "QUAL_ZERO_SAMPLE",
+        "规则版本": "v1",
+        "content_hash": "qa-zs-v1-90ab13cd",
+        "status": "已生效",
+        "reviewed": True,
+        "bound_block": False,
+        "released_at": "2026-10-15T11:30:00",
+        "replaced_by": None,
+        "reviewed_by": "数据治理评审组",
+    },
+    {
+        "id": 6,
+        "规则编号": "QUAL_PAY_STATUS",
+        "规则版本": "v1",
+        "content_hash": "qa-ps-v1-6a2f19b4",
+        "status": "已生效",
+        "reviewed": True,
+        "bound_block": False,
+        "released_at": "2026-10-20T10:20:00",
+        "replaced_by": None,
+        "reviewed_by": "数据治理评审组",
+    },
+]
+
+# 采样快照：sample_hash 由校验表、目标字段、规则版本和采样比例派生，
+# 同一 key 在同一版本下只留一条，重复采样会在这里体现为 reused。
+SEED_QUALITY_SNAPSHOTS = [
+    {
+        "id": 1,
+        "sample_key": "QUAL_PAY_AMOUNT|v2|DWD_PAY_ORDER|pay_amount|0.1",
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "规则版本": "v2",
+        "校验表名": "DWD_PAY_ORDER",
+        "目标字段": "pay_amount",
+        "采样比例": 0.1,
+        "sample_hash": "9b7d2c41e0",
+        "sample_size": 1000,
+        "bad_rows": 24,
+        "bad_rate": 2.4,
+        "boundary_value": 3.0,
+        "lower_boundary_value": 0.0,
+        "period_from": "2026-10-01",
+        "period_to": "2026-10-31",
+        "evaluated_at": "2026-10-20T10:06:00",
+    },
+    {
+        "id": 2,
+        "sample_key": "QUAL_PAY_AMOUNT|v1|DWD_PAY_ORDER|pay_amount|0.1",
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "规则版本": "v1",
+        "校验表名": "DWD_PAY_ORDER",
+        "目标字段": "pay_amount",
+        "采样比例": 0.1,
+        "sample_hash": "3e18aa77c2",
+        "sample_size": 1000,
+        "bad_rows": 24,
+        "bad_rate": 2.4,
+        "boundary_value": 3.0,
+        "lower_boundary_value": 0.0,
+        "period_from": "2026-10-01",
+        "period_to": "2026-10-31",
+        "evaluated_at": "2026-10-08T09:13:00",
+    },
+    {
+        "id": 3,
+        "sample_key": "QUAL_ORDER_STATUS|v1|DWD_ORDER|order_status|0.2",
+        "规则编号": "QUAL_ORDER_STATUS",
+        "规则版本": "v1",
+        "校验表名": "DWD_ORDER",
+        "目标字段": "order_status",
+        "采样比例": 0.2,
+        "sample_hash": "c4018fee52",
+        "sample_size": 5000,
+        "bad_rows": 75,
+        "bad_rate": 1.5,
+        "boundary_value": 5.0,
+        "lower_boundary_value": 0.0,
+        "period_from": "2026-10-01",
+        "period_to": "2026-10-31",
+        "evaluated_at": "2026-10-09T14:20:00",
+    },
+    {
+        "id": 4,
+        "sample_key": "QUAL_ZERO_SAMPLE|v1|ODS_LOGIN_EVENT|user_id|0.05",
+        "规则编号": "QUAL_ZERO_SAMPLE",
+        "规则版本": "v1",
+        "校验表名": "ODS_LOGIN_EVENT",
+        "目标字段": "user_id",
+        "采样比例": 0.05,
+        "sample_hash": "0f5b6e21d9",
+        "sample_size": 0,
+        "bad_rows": 0,
+        "bad_rate": 0.0,
+        "boundary_value": 1.0,
+        "lower_boundary_value": 0.0,
+        "evaluated_at": "2026-10-15T11:31:00",
+    },
+]
+
+# 判定结果：历史口径按「当时版本」保留，不被新版本覆盖。
+SEED_QUALITY_EVALUATIONS = [
+    {
+        "id": 1,
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "规则版本": "v1",
+        "sample_key": "QUAL_PAY_AMOUNT|v1|DWD_PAY_ORDER|pay_amount|0.1",
+        "sample_hash": "3e18aa77c2",
+        "sample_size": 1000,
+        "bad_rows": 24,
+        "bad_rate": 2.4,
+        "boundary_value": 3.0,
+        "lower_boundary_value": 0.0,
+        "boundary_side": "上界",
+        "conclusion": "通过",
+        "block_status": "通过",
+        "state": "已完成",
+        "decision": "通过",
+        "reused_sample": False,
+        "rerun_scope": "全量",
+        "period_from": "2026-10-01",
+        "period_to": "2026-10-31",
+        "evaluated_at": "2026-10-08T09:13:00",
+    },
+    {
+        "id": 2,
+        "规则编号": "QUAL_PAY_AMOUNT",
+        "规则版本": "v2",
+        "sample_key": "QUAL_PAY_AMOUNT|v2|DWD_PAY_ORDER|pay_amount|0.1",
+        "sample_hash": "9b7d2c41e0",
+        "sample_size": 1000,
+        "bad_rows": 24,
+        "bad_rate": 2.4,
+        "boundary_value": 3.0,
+        "lower_boundary_value": 0.0,
+        "boundary_side": "上界",
+        "conclusion": "通过",
+        "block_status": "通过",
+        "state": "已完成",
+        "decision": "通过",
+        "reused_sample": False,
+        "rerun_scope": "全量",
+        "evaluated_at": "2026-10-20T10:06:00",
+    },
+]
 
 SEED_ROWS: dict[str, list[dict[str, Any]]] = {
     "landing": [{'id': 1,
@@ -256,42 +568,7 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '冷热阈值': '分区治理样例3',
   '预建天数': '分区治理样例3',
   '归档路径': '分区治理样例3'}],
-    "quality": [{'id': 1,
-  'status': '草稿',
-  'pending': True,
-  'abnormal': False,
-  '规则编号': 'QUAL-0001',
-  '校验表名': '质量校验样例1',
-  '目标字段': '质量校验样例1',
-  '校验表达式': '质量校验样例1',
-  '阈值下界': '质量校验样例1',
-  '阈值上界': '质量校验样例1',
-  '采样比例': '质量校验样例1',
-  '阻断级别': '质量校验样例1'},
- {'id': 2,
-  'status': '规则评审中',
-  'pending': True,
-  'abnormal': True,
-  '规则编号': 'QUAL-0002',
-  '校验表名': '质量校验样例2',
-  '目标字段': '质量校验样例2',
-  '校验表达式': '质量校验样例2',
-  '阈值下界': '质量校验样例2',
-  '阈值上界': '质量校验样例2',
-  '采样比例': '质量校验样例2',
-  '阻断级别': '质量校验样例2'},
- {'id': 3,
-  'status': '已启用',
-  'pending': False,
-  'abnormal': False,
-  '规则编号': 'QUAL-0003',
-  '校验表名': '质量校验样例3',
-  '目标字段': '质量校验样例3',
-  '校验表达式': '质量校验样例3',
-  '阈值下界': '质量校验样例3',
-  '阈值上界': '质量校验样例3',
-  '采样比例': '质量校验样例3',
-  '阻断级别': '质量校验样例3'}],
+    "quality": SEED_QUALITY_VERSIONS,
     "lineage": [{'id': 1,
   'status': '草稿',
   'pending': True,
@@ -364,42 +641,59 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '覆盖策略': '历史补数样例3',
   '完成水位': '历史补数样例3',
   '失败区间': '历史补数样例3'}],
-    "cleanrule": [{'id': 1,
-  'status': '草稿',
-  'pending': True,
-  'abnormal': False,
-  '规则编号': 'CLEA-0001',
-  '输入表名': '清洗规则样例1',
-  '空值策略': '清洗规则样例1',
-  '格式表达式': '清洗规则样例1',
-  '异常阈值': '清洗规则样例1',
-  '输出字段': '清洗规则样例1',
-  '规则版本': '清洗规则样例1',
-  '生效日期': '2026-09-01'},
- {'id': 2,
-  'status': '规则评审中',
-  'pending': True,
-  'abnormal': True,
-  '规则编号': 'CLEA-0002',
-  '输入表名': '清洗规则样例2',
-  '空值策略': '清洗规则样例2',
-  '格式表达式': '清洗规则样例2',
-  '异常阈值': '清洗规则样例2',
-  '输出字段': '清洗规则样例2',
-  '规则版本': '清洗规则样例2',
-  '生效日期': '2026-09-02'},
- {'id': 3,
-  'status': '已启用',
-  'pending': False,
-  'abnormal': False,
-  '规则编号': 'CLEA-0003',
-  '输入表名': '清洗规则样例3',
-  '空值策略': '清洗规则样例3',
-  '格式表达式': '清洗规则样例3',
-  '异常阈值': '清洗规则样例3',
-  '输出字段': '清洗规则样例3',
-  '规则版本': '清洗规则样例3',
-  '生效日期': '2026-09-03'}],
+    "cleanrule": [
+        {
+            "id": 1,
+            "status": "规则评审中",
+            "pending": True,
+            "abnormal": False,
+            "规则编号": "CLEAN_PAY_AMOUNT",
+            "输入表名": "DWD_PAY_ORDER",
+            "空值策略": "空值置 0",
+            "格式表达式": "trim(pay_amount)",
+            "异常阈值": 2.0,
+            "输出字段": "pay_amount,pay_status",
+            "规则版本": "v2",
+            "生效日期": "2026-10-20",
+            "reviewed": False,   # v2 未经评审，持久化版本仍以 v1 为准
+            "release_state": "待评审",
+            "superseded_by": None,
+        },
+        {
+            "id": 2,
+            "status": "已启用",
+            "pending": False,
+            "abnormal": False,
+            "规则编号": "CLEAN_PAY_AMOUNT",
+            "输入表名": "DWD_PAY_ORDER",
+            "空值策略": "空值置 0",
+            "格式表达式": "trim(pay_amount)",
+            "异常阈值": 2.0,
+            "输出字段": "pay_amount",
+            "规则版本": "v1",
+            "生效日期": "2026-10-01",
+            "reviewed": True,
+            "release_state": "已生效",
+            "superseded_by": "v2",
+        },
+        {
+            "id": 3,
+            "status": "已启用",
+            "pending": False,
+            "abnormal": False,
+            "规则编号": "CLEAN_ORDER_NO",
+            "输入表名": "DWD_ORDER",
+            "空值策略": "丢弃空值行",
+            "格式表达式": "upper(order_no)",
+            "异常阈值": 5.0,
+            "输出字段": "order_no",
+            "规则版本": "v1",
+            "生效日期": "2026-10-09",
+            "reviewed": True,
+            "release_state": "已生效",
+            "superseded_by": None,
+        },
+    ],
     "transform": [{'id': 1,
   'status': '草稿',
   'pending': True,
@@ -651,5 +945,131 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '变更后值': '变更审计样例3',
   '操作人': '变更审计样例3',
   '操作时间': '2026-09-03',
-  '变更原因': '变更审计样例3'}]
+  '变更原因': '变更审计样例3'}],
+    "quality_version_ledger": SEED_QUALITY_VERSION_LEDGER,
+    "quality_sample_snapshot": SEED_QUALITY_SNAPSHOTS,
+    "quality_evaluation": SEED_QUALITY_EVALUATIONS,
+    "cleanrule_version_ledger": [
+        {
+            "id": 1,
+            "规则编号": "CLEAN_PAY_AMOUNT",
+            "规则版本": "v1",
+            "content_hash": "cp-v1-41d8ab90",
+            "status": "已生效",
+            "reviewed": True,
+            "released_at": "2026-10-01T08:00:00",
+            "replaced_by": None,
+            "reviewed_by": "数据治理评审组",
+            "input_table": "DWD_PAY_ORDER",
+            "output_fields": ["pay_amount"],
+        },
+        {
+            "id": 2,
+            "规则编号": "CLEAN_PAY_AMOUNT",
+            "规则版本": "v2",
+            "content_hash": "cp-v2-77f2c33a",
+            "status": "待评审",
+            "reviewed": False,
+            "released_at": None,
+            "replaced_by": None,
+            "reviewed_by": None,
+            "input_table": "DWD_PAY_ORDER",
+            "output_fields": ["pay_amount", "pay_status"],
+        },
+        {
+            "id": 3,
+            "规则编号": "CLEAN_ORDER_NO",
+            "规则版本": "v1",
+            "content_hash": "cp-on-v1-2b90e105",
+            "status": "已生效",
+            "reviewed": True,
+            "released_at": "2026-10-09T08:00:00",
+            "replaced_by": None,
+            "reviewed_by": "数据治理评审组",
+            "input_table": "DWD_ORDER",
+            "output_fields": ["order_no"],
+        },
+    ],
+    "cleanrule_release": [
+        {
+            "id": 1,
+            "规则编号": "CLEAN_PAY_AMOUNT",
+            "生效版本": "v1",
+            "候选版本": "v2",
+            "发布状态": "已生效",
+            # v1 当时并未改动输出字段；v2 新增 pay_status 要等换版时才算受影响区间。
+            "output_changed": False,
+            "affected_range": None,
+            "affected_fields": [],
+            "released_at": "2026-10-01T08:00:00",
+        },
+        {
+            "id": 2,
+            "规则编号": "CLEAN_ORDER_NO",
+            "生效版本": "v1",
+            "候选版本": None,
+            "发布状态": "已生效",
+            "output_changed": False,
+            "affected_range": None,
+            "affected_fields": [],
+            "released_at": "2026-10-09T08:00:00",
+        },
+    ],
 }
+
+# --- 指纹规范化：种子数据与运行时共用同一套口径，避免手写哈希漂移。 ---
+from app.services.versioning import content_hash, sample_hash, sample_key, sampling_hash, to_ratio, verdict_hash
+
+for _rule in SEED_QUALITY_VERSIONS:
+    _version = str(_rule["规则版本"])
+    _content = content_hash(_rule)
+    for _ledger in SEED_QUALITY_VERSION_LEDGER:
+        if _ledger["规则编号"] == _rule["规则编号"] and _ledger["规则版本"] == _version:
+            _ledger["content_hash"] = _content
+            _ledger["sampling_hash"] = sampling_hash(_rule)
+    for _snapshot in SEED_QUALITY_SNAPSHOTS:
+        if _snapshot["规则编号"] == _rule["规则编号"] and _snapshot["规则版本"] == _version:
+            _snapshot["sample_key"] = sample_key(_rule)
+            _snapshot["sampling_hash"] = sampling_hash(_rule)
+            _snapshot["content_hash"] = _content
+            _snapshot["verdict_hash"] = verdict_hash(_rule)
+            _snapshot["block_level"] = _rule.get("阻断级别")
+            _snapshot["sample_hash"] = sample_hash(_rule)
+
+for _evaluation in SEED_QUALITY_EVALUATIONS:
+    for _snapshot in SEED_QUALITY_SNAPSHOTS:
+        if (
+            _snapshot["规则编号"] == _evaluation["规则编号"]
+            and _snapshot["规则版本"] == _evaluation["规则版本"]
+        ):
+            _evaluation["sample_key"] = _snapshot["sample_key"]
+            _evaluation["sample_hash"] = _snapshot["sample_hash"]
+
+for _evaluation in SEED_QUALITY_EVALUATIONS:
+    _evaluation.setdefault("active", True)
+    _evaluation.setdefault("invalidated", False)
+    _evaluation.setdefault("reuse_mode", "全量重采")
+    _evaluation.setdefault("rerun_scope", "全量重采")
+
+# 清洗账本与规则行保持同一口径：输出字段、输入表名和评审状态以规则行为准。
+# 这里用一个不依赖 services 的本地拆分，避免 seed -> services -> store 循环导入。
+def _plain_fields(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "")
+    for _sep in ("，", ",", "、", "|"):
+        text = text.replace(_sep, " ")
+    return [item for item in text.split() if item]
+
+
+for _clean_ledger in SEED_ROWS["cleanrule_version_ledger"]:
+    for _clean_row in SEED_ROWS["cleanrule"]:
+        if (
+            _clean_ledger["规则编号"] == _clean_row["规则编号"]
+            and _clean_ledger["规则版本"] == _clean_row["规则版本"]
+        ):
+            _clean_ledger["output_fields"] = _plain_fields(_clean_row.get("输出字段"))
+            _clean_ledger["input_table"] = _clean_row.get("输入表名")
+            _clean_ledger["reviewed"] = bool(_clean_row.get("reviewed"))
+
+_ = to_ratio  # 保持导入显式，便于后续扩展归一化用例
